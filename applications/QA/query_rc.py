@@ -362,7 +362,7 @@ class RC(object):
                 y -= 1
         return result[::-1]
 
-    def func_for_best(self, ques,sent, sent_rel, words, included_rel, replace_pos=-1):
+    def func_for_best(self, ques, sent, sent_rel, words, included_rel, replace_pos=-1):
         min_word, min_dist, min_num = None, int(0x3f3f3f3f), 0
         for word in words:
             index = sent.index(word)
@@ -431,6 +431,7 @@ class RC(object):
             if categories[i] != 'WHO':
                 continue
 
+            cnt += 1
             ques = [word for word in questions[i] if word not in stop_words]
             sent = [word for word in extracted_sents[i][0] if word not in stop_words]
 
@@ -443,7 +444,6 @@ class RC(object):
             else:
                 continue
 
-            cnt += 1
             ques_tag = list(postagger.postag(ques))
             ques_rel = [(arc.head, arc.relation) for arc in list(parser.parse(ques, ques_tag))]
             sent_tag = list(postagger.postag(sent))
@@ -525,8 +525,8 @@ class RC(object):
                 break
 
         bound = verb_index if verb_index else -1
-        ques_noun = [ques[i] for i in range(len(ques)) if 'n' in ques_tag[i]]
-        tmp_words = [sent[i] for i in range(bound+1, len(sent)) if 'n' in sent_tag[i]]
+        ques_noun = [ques[i] for i in range(len(ques)) if ques_tag[i] in ['n', 'ns', 'nh', 'nt', 'nz']]
+        tmp_words = [sent[i] for i in range(bound+1, len(sent)) if sent_tag[i] in ['n', 'ns', 'nh', 'nt', 'nz']]
         tmp_words = [word for word in tmp_words if word not in ques_noun]
         tmp_words = sorted(set(tmp_words))
         if len(tmp_words) <= 1:
@@ -623,12 +623,12 @@ class RC(object):
             lcs = self.imp_LCS(ques, sent)
             index = lcs[-1][1]
             for i in range(index+1, len(sent)):
-                if sent_tag[i] == 'v':
+                if sent_tag[i] == 'v' and sent[i] not in ques:
                     return [sent[i],]
 
         if '为什么' in ques:
             for i in range(len(sent)):
-                if i+1 < len(sent) and sent[i] == '为' and sent_rel[i][1] == 'VOB':
+                if i+1 < len(sent) and sent[i] == '为' and sent_rel[i][1] == 'VOB' and sent[i+1] not in ques:
                     return [sent[i+1], ]
         return []
 
@@ -638,18 +638,20 @@ class RC(object):
             if categories[i] != 'WHAT':
                 continue
 
+            cnt += 1
             ques = [word for word in questions[i] if word not in stop_words]
             sent = [word for word in extracted_sents[i][0] if word not in stop_words]
+
+            if '什么' in ques:
+                pos = ques.index('什么')
+                ques[pos] = '物体'
+
             ques_tag = list(postagger.postag(ques))
             ques_rel = [(arc.head, arc.relation) for arc in list(parser.parse(ques, ques_tag))]
             sent_tag = list(postagger.postag(sent))
             sent_rel = [(arc.head, arc.relation) for arc in list(parser.parse(sent, sent_tag))]
 
-            if '什么' in ques:
-                pos = ques.index('什么')
-                ques[pos] = '物体'
-            else:
-                cnt += 1
+            if '物体' not in ques:
                 tmp_words = self.ans_for_VERB_WHAT(ques, ques_tag, ques_rel, sent, sent_tag, sent_rel)
                 if tmp_words:
                     enter_cnt+=1
@@ -660,23 +662,16 @@ class RC(object):
                 continue
 
             if ques_rel[pos][1] in ['VOB']:
-                cnt += 1
                 tmp_words = self.ans_for_VOB_WHAT(ques, ques_tag, ques_rel, sent, sent_tag, sent_rel)
             elif ques_rel[pos][1] in ['POB']:
-                cnt += 1
                 tmp_words = self.ans_for_POB_WHAT(ques, ques_tag, ques_rel, sent, sent_tag, sent_rel)
             elif ques_rel[pos][1] in ['SBV']:
-                cnt += 1
                 tmp_words = self.ans_for_SBV_WHAT(ques, ques_tag, ques_rel, sent, sent_tag, sent_rel)
             elif ques_rel[pos][1] in ['ATT']:
-                cnt += 1
                 tmp_words = self.ans_for_ATT_WHAT(ques, ques_tag, ques_rel, sent, sent_tag, sent_rel)
             elif ques_rel[pos][1] in ['COO']:
-                cnt += 1
                 tmp_words = self.ans_for_COO_WHAT(ques, ques_tag, ques_rel, sent, sent_tag, sent_rel)
             else:
-                # ADV|FOB|HED
-                cnt += 1
                 tmp_words = []
 
             if not tmp_words: continue
@@ -694,12 +689,9 @@ class RC(object):
             if categories[i] != 'WHERE':
                 continue
 
-            ques = [word for word in questions[i] if word not in stop_words]
-            sent = [word for word in extracted_sents[i][0] if word not in stop_words]
-            ques_tag = list(postagger.postag(ques))
-            ques_rel = [(arc.head, arc.relation) for arc in list(parser.parse(ques, ques_tag))]
-            sent_tag = list(postagger.postag(sent))
-            sent_rel = [(arc.head, arc.relation) for arc in list(parser.parse(sent, sent_tag))]
+            cnt += 1
+            res = self.handle_ques_sent(questions, extracted_sents, i)
+            ques, ques_tag, ques_rel, sent, sent_tag, sent_rel = res
 
             lcs = self.imp_LCS(ques, sent)
             if '哪儿' in ques:
@@ -736,19 +728,15 @@ class RC(object):
                 true_cnt += 1
         print(cnt, enter_cnt, true_cnt)
 
-    def extract_ans_for_WHICH(self, qustions, categories, extracted_sents):
+    def extract_ans_for_WHICH(self, questions, categories, extracted_sents):
         cnt, enter_cnt, true_cnt = 0, 0, 0
         for i in range(len(questions)):
             if categories[i] != 'WHICH':
                 continue
 
-            ques = [word for word in questions[i] if word not in stop_words]
-            sent = [word for word in extracted_sents[i][0] if word not in stop_words]
-            ques_tag = list(postagger.postag(ques))
-            ques_rel = [(arc.head, arc.relation) for arc in list(parser.parse(ques, ques_tag))]
-            sent_tag = list(postagger.postag(sent))
-            sent_rel = [(arc.head, arc.relation) for arc in list(parser.parse(sent, sent_tag))]
-
+            cnt += 1
+            res = self.handle_ques_sent(questions, extracted_sents, i)
+            ques, ques_tag, ques_rel, sent, sent_tag, sent_rel = res
             ques_noun = [ques[i] for i in range(len(ques)) if 'n' in ques_tag[i]]
             tmp_words = [sent[i] for i in range(len(sent)) if 'n' in sent_tag[i]]
             tmp_words = [word for word in tmp_words if word not in ques_noun]
@@ -777,6 +765,53 @@ class RC(object):
                 true_cnt += 1
         print(cnt, enter_cnt, true_cnt)
 
+    def handle_ques_sent(self, questions, extracted_sents, i):
+        ques = [word for word in questions[i] if word not in stop_words]
+        sent = [word for word in extracted_sents[i][0] if word not in stop_words]
+        ques_tag = list(postagger.postag(ques))
+        ques_rel = [(arc.head, arc.relation) for arc in list(parser.parse(ques, ques_tag))]
+        sent_tag = list(postagger.postag(sent))
+        sent_rel = [(arc.head, arc.relation) for arc in list(parser.parse(sent, sent_tag))]
+        return ques, ques_tag, ques_rel, sent, sent_tag, sent_rel
+
+    def extract_ans_for_extra(self,  questions, extracted_sents):
+        cnt, enter_cnt, true_cnt = 0, 0, 0
+        for i in range(len(questions)):
+            if pred_answers[i] != '无':
+                continue
+
+            cnt += 1
+            res = self.handle_ques_sent(questions, extracted_sents, i)
+            ques, ques_tag, ques_rel, sent, sent_tag, sent_rel = res
+
+            ques_noun = [ques[j] for j in range(len(ques)) if ques_tag[j] in ['n', 'ns', 'nh', 'nt']]
+            tmp_words = [sent[j] for j in range(len(sent)) if sent_tag[j] in ['n', 'ns', 'nh', 'nt']]
+            tmp_words = [word for word in tmp_words if word not in ques_noun]
+            tmp_words = sorted(set(tmp_words))
+            if not tmp_words:
+                ques_noun = [ques[j] for j in range(len(ques)) if ques_tag[j] in ['a', 'v', 'i', 'nz']]
+                tmp_words = [sent[j] for j in range(len(sent)) if sent_tag[j] in ['a', 'v', 'i', 'nz']]
+                tmp_words = [word for word in tmp_words if word not in ques_noun]
+                tmp_words = sorted(set(tmp_words))
+                if not tmp_words:
+                    tmp_words = [word for word in sent if word not in ques_noun]
+
+            included_rel = ['SBV', 'ATT', 'COO', 'VOB', 'POB', 'FOB', 'IOB']
+            replaced_pos = -1
+            for index, phrase in enumerate(ques):
+                if re.search('谁|什么|哪|怎', phrase):
+                    replaced_pos = index
+            ans = self.func_for_best(ques, sent, sent_rel, tmp_words, included_rel, replaced_pos)
+            if not ans:
+                pred_answers[i] = tmp_words[0]
+                continue
+            pred_answers[i] = ans[0]
+            ans = ans[0]
+            enter_cnt += 1
+            if ans in answers[i] or answers[i] in ans:
+                true_cnt += 1
+        print(cnt, enter_cnt, true_cnt)
+
 
 if __name__ == '__main__':
     parser = Parser()
@@ -799,14 +834,11 @@ if __name__ == '__main__':
     questions, extracted_sents = handler.read_extract_sents('ques_matched_sents.txt')
     categories, cate_ques = handler.classify_questions(questions)
 
-    # for cate in ['WHAT', 'WHO', 'WHERE', 'WHEN', 'WHY', 'WHICH', 'HOW', 'OTHER']:
-    #     print(len(cate_ques[cate]), end=' ')
-    # print()
-
     handler.extract_ans_for_WHO(questions, categories, extracted_sents)
     handler.extract_ans_for_WHAT(questions, categories, extracted_sents)
     handler.extract_ans_for_WHERE(questions, categories, extracted_sents)
     handler.extract_ans_for_WHICH(questions, categories, extracted_sents)
+    handler.extract_ans_for_extra(questions, extracted_sents)
 
     with open('pred_answer.txt', 'w') as fw:
         for i in range(len(questions)):
@@ -815,5 +847,3 @@ if __name__ == '__main__':
     parser.release()
     segmentor.release()
     postagger.release()
-
-# 75.67, 61.56
