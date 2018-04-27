@@ -16,13 +16,16 @@ from string import punctuation as env_punc
 from zhon.hanzi import punctuation as chs_punc
 from pyltp import Segmentor, Postagger, Parser
 
-DEBUG = True
+DEBUG = False
 puncs = env_punc + chs_punc
+TMP_RESULT = os.path.join(os.getcwd(), 'tmp_result')
 LTP_DATA_DIR = os.path.join(os.getcwd(), 'ltp_model')
 cws_model_path = os.path.join(LTP_DATA_DIR, 'cws.model')
 pos_model_path = os.path.join(LTP_DATA_DIR, 'pos.model')
 par_model_path = os.path.join(LTP_DATA_DIR, 'parser.model')
 
+des = ['a', 'b', 'c', 'd', 'e', 'g', 'h', 'i', 'j', 'k', 'm', 'n', 'nd', 'nh', 'ni', 'nl', 'ns', 'nt', 'nz', 'o', 'p', 'q', 'r', 'u', 'v', 'wp', 'ws']
+rags = ['SBV', 'VOB', 'POB', 'IOB', 'FOB', 'DBL', 'ATT', 'ADV', 'CMP', 'COO', 'LAD', 'RAD', 'IS', 'WP']
 
 class RC(object):
     def __init__(self):
@@ -68,7 +71,7 @@ class RC(object):
         answers = open(answer_path).read().strip().split('\n')
         answers = [item.split()[-1] for item in answers]
 
-        with open('train.txt', 'w') as fw:
+        with open(TMP_RESULT + '/train.txt', 'w') as fw:
             fw.write('\n')
             for index, content in enumerate(contents):
                 fw.write('text_' + str(index) + ':' + ' '.join(questions[index]) + '\n')
@@ -76,12 +79,59 @@ class RC(object):
                     fw.write(' '.join(sentence) + '\n')
                 fw.write('\n')
 
-        with open('questions.txt', 'w') as fw:
+        with open(TMP_RESULT + '/train_ques.txt', 'w') as fw:
             for question in questions:
                 fw.write(' '.join(question) + '\n')
 
-        with open('answers.txt', 'w') as fw:
+        with open(TMP_RESULT + '/answers.txt', 'w') as fw:
             fw.write('\n'.join(answers))
+
+    def adjust_test_data(self, test_path):
+        """
+        adjust source date, including remove unused words and do segmentation again
+        :param test_path: path of test data
+        :return: contents, questions
+        """
+
+        # read content
+        train_text = open(test_path).read().strip()
+        contents = re.split('<qid.+?\n', train_text)
+        new_contents = []
+        for content in contents:
+            sentences = content.split('\n')
+            new_sentences = []
+            for sentence in sentences:
+                words = sentence.split(' ')[2:-1]
+                join_words = ''.join(words)
+                words = list(segmentor.segment(join_words))  # do segmentation again
+                words = [word for word in words if word not in puncs or word in ['：', '，']]
+                if words:
+                    new_sentences.append(words)
+            new_contents.append(new_sentences)
+        new_contents[-1] = new_contents[-1][:-1]
+        contents = new_contents
+
+        # read questions
+        train_text = re.sub('哪 国', '哪个 国家', train_text)
+        questions = [line for line in train_text.split('\n') if '<qid' in line]
+        for i in range(len(questions)):
+            tmp = questions[i].split(' ')[2:-1]
+            join_words = ''.join(tmp)
+            tmp = segmentor.segment(join_words)  # do segmentation again
+            tmp = [word for word in tmp if word not in puncs or word in ['：', '，']]
+            questions[i] = tmp
+
+        with open(TMP_RESULT + '/test.txt', 'w') as fw:
+            fw.write('\n')
+            for index, content in enumerate(contents):
+                fw.write('text_' + str(index) + ':' + ' '.join(questions[index]) + '\n')
+                for sentence in content:
+                    fw.write(' '.join(sentence) + '\n')
+                fw.write('\n')
+
+        with open(TMP_RESULT + '/test_ques.txt', 'w') as fw:
+            for question in questions:
+                fw.write(' '.join(question) + '\n')
 
     def read_adjust_data(self, train_path, question_path, answer_path):
         """
@@ -102,6 +152,24 @@ class RC(object):
 
         answers = open(answer_path).read().strip().split('\n')
         return contents, questions, answers
+
+    def read_test_data(self, test_path, question_path):
+        """
+        read adjust data, includign source text, questions, answers
+        :param test_path: file path of train_data
+        :param question_path: file path of questions
+        :return: content, questions, answers
+        """
+
+        train_text = open(test_path).read().strip()
+        contents = re.split('\ntext_.+?\n', train_text)
+        contents = [[sent.split(' ') for sent in content.strip().split('\n')] for content in contents]
+        contents[0] = contents[0][1:]
+
+        questions = open(question_path).read().strip().split('\n')
+        questions = [item.split(' ') for item in questions]
+
+        return contents, questions
 
     def classify_questions(self, questions):
         """
@@ -245,7 +313,7 @@ class RC(object):
         rate = max_length / len(ques)
         return rate, max_sent
 
-    def get_ans_sents(self, contents, questions):
+    def get_ans_sents(self, contents, questions, corpus):
         """
         get the most similar sentences all questions
         :param contents: all texts/stories
@@ -255,7 +323,7 @@ class RC(object):
 
         max_sents = []
         cnt = [0 for _ in range(7)]
-        fw = open('failed_matched_sents.txt', 'w')
+        fw = open(TMP_RESULT + '/failed_matched_sents_%s.txt'% corpus, 'w')
         for ques, text in zip(questions, contents):
             rate_1, max_sent_1 = self.get_sent_by_lcs(ques, text)             # LCS based on phrase
             if rate_1 >= 0.6:
@@ -287,12 +355,9 @@ class RC(object):
                         index = questions.index(ques)
                         fw.write('text_' + str(index) + ':' + ' '.join(ques) + '\n')
                         fw.write(''.join(max_sent_1) + '\n' + ''.join(max_sent_2) + '\n' + ''.join(max_sent_3) + '\n\n')
-                        for sentence in text:
-                            fw.write(' '.join(sentence) + '\n')
-                        fw.write('\n')
 
         if DEBUG:print(sum(cnt[:3]), cnt)
-        with open('ques_matched_sents.txt', 'w') as fw:
+        with open(TMP_RESULT + '/ques_matched_sents_%s.txt' % corpus, 'w') as fw:
             for i in range(len(questions)):
                 ques = questions[i]
                 sents = max_sents[i]
@@ -363,6 +428,17 @@ class RC(object):
         return result[::-1]
 
     def func_for_best(self, ques, sent, sent_rel, words, included_rel, replace_pos=-1):
+        """
+        to find the best answer word for the question
+        :param ques: word sequence of question
+        :param sent: word sequence of candidate sentence
+        :param sent_rel: dependency syntax analysis result for candidate sentence
+        :param words: candidate phrases
+        :param included_rel: admitted relation for phrases
+        :param replace_pos: index of the interrogative phrase
+        :return: the best phrase for the question
+        """
+
         min_word, min_dist, min_num = None, int(0x3f3f3f3f), 0
         for word in words:
             index = sent.index(word)
@@ -426,6 +502,14 @@ class RC(object):
         return self.func_for_best(ques, sent, sent_rel, words, included_rel, replace_pos)
 
     def extract_ans_for_WHO(self, questions, categories, extracted_sents):
+        """
+        extract answers for 'WHO' questions
+        :param questions: all questions
+        :param categories: category for each question
+        :param extracted_sents: candicated sentences for questions
+        :return: None
+        """
+
         cnt, enter_cnt, true_cnt = 0, 0, 0
         for i in range(len(questions)):
             if categories[i] != 'WHO':
@@ -468,8 +552,9 @@ class RC(object):
                 enter_cnt += 1
                 ans = tmp_words[0]
                 pred_answers[i] = ans
-                if ans in answers[i] or answers[i] in ans:
-                    true_cnt += 1
+                if DEBUG:
+                    if ans in answers[i] or answers[i] in ans:
+                        true_cnt += 1
             elif pos == len(ques)-1: # end WHO
                 verb_index = -1
                 for j in range(len(lcs)-1, -1, -1):
@@ -487,8 +572,9 @@ class RC(object):
                 enter_cnt += 1
                 ans = tmp_words[0]
                 pred_answers[i] = ans
-                if ans in answers[i] or answers[i] in ans:
-                    true_cnt += 1
+                if DEBUG:
+                    if ans in answers[i] or answers[i] in ans:
+                        true_cnt += 1
             else: # middle WHO
                 lindex, rindex = 0, 0
                 for item in lcs:
@@ -512,8 +598,9 @@ class RC(object):
                 enter_cnt += 1
                 ans = tmp_words[0]
                 pred_answers[i] = ans
-                if ans in answers[i] or answers[i] in ans:
-                    true_cnt += 1
+                if DEBUG:
+                    if ans in answers[i] or answers[i] in ans:
+                        true_cnt += 1
         print(cnt, enter_cnt, true_cnt)
 
     def ans_for_VOB_WHAT(self, ques, ques_tag, ques_rel, sent, sent_tag, sent_rel):
@@ -633,6 +720,14 @@ class RC(object):
         return []
 
     def extract_ans_for_WHAT(self, questions, categories, extracted_sents):
+        """
+        extract answers for 'WHAT' questions
+        :param questions: all questions
+        :param categories: category for each question
+        :param extracted_sents: candicated sentences for questions
+        :return: None
+        """
+
         cnt, enter_cnt, true_cnt = 0, 0, 0
         for i in range(len(questions)):
             if categories[i] != 'WHAT':
@@ -657,8 +752,9 @@ class RC(object):
                     enter_cnt+=1
                     ans = tmp_words[0]
                     pred_answers[i] = ans
-                    if ans in answers[i] or answers[i] in ans:
-                        true_cnt += 1
+                    if DEBUG:
+                        if ans in answers[i] or answers[i] in ans:
+                            true_cnt += 1
                 continue
 
             if ques_rel[pos][1] in ['VOB']:
@@ -678,12 +774,21 @@ class RC(object):
             enter_cnt += 1
             ans = tmp_words[0]
             pred_answers[i] = ans
-            if ans in answers[i] or answers[i] in ans:
-                true_cnt += 1
+            if DEBUG:
+                if ans in answers[i] or answers[i] in ans:
+                    true_cnt += 1
 
         print(cnt, enter_cnt, true_cnt)
 
     def extract_ans_for_WHERE(self, questions, categories, extracted_sents):
+        """
+        extract answers for 'WHERE' questions
+        :param questions: all questions
+        :param categories: category for each question
+        :param extracted_sents: candicated sentences for questions
+        :return: None
+        """
+
         cnt, enter_cnt, true_cnt = 0, 0, 0
         for i in range(len(questions)):
             if categories[i] != 'WHERE':
@@ -724,11 +829,20 @@ class RC(object):
             enter_cnt += 1
             ans = tmp_words[0]
             pred_answers[i] = ans
-            if ans in answers[i] or answers[i] in ans:
-                true_cnt += 1
+            if DEBUG:
+                if ans in answers[i] or answers[i] in ans:
+                    true_cnt += 1
         print(cnt, enter_cnt, true_cnt)
 
     def extract_ans_for_WHICH(self, questions, categories, extracted_sents):
+        """
+        extract answers for 'WHICH' questions
+        :param questions: all questions
+        :param categories: category for each question
+        :param extracted_sents: candicated sentences for questions
+        :return: None
+        """
+
         cnt, enter_cnt, true_cnt = 0, 0, 0
         for i in range(len(questions)):
             if categories[i] != 'WHICH':
@@ -761,11 +875,20 @@ class RC(object):
             enter_cnt += 1
             ans = tmp_words[0]
             pred_answers[i] = ans
-            if ans in answers[i] and answers[i] in ans:
-                true_cnt += 1
+            if DEBUG:
+                if ans in answers[i] or answers[i] in ans:
+                    true_cnt += 1
         print(cnt, enter_cnt, true_cnt)
 
     def handle_ques_sent(self, questions, extracted_sents, i):
+        """
+        do POS and dependency syntax analysis for question and candidate sentence
+        :param questions: all questions
+        :param extracted_sents: candicated sentences for questions
+        :param i: index of the question
+        :return: None
+        """
+
         ques = [word for word in questions[i] if word not in stop_words]
         sent = [word for word in extracted_sents[i][0] if word not in stop_words]
         ques_tag = list(postagger.postag(ques))
@@ -774,7 +897,14 @@ class RC(object):
         sent_rel = [(arc.head, arc.relation) for arc in list(parser.parse(sent, sent_tag))]
         return ques, ques_tag, ques_rel, sent, sent_tag, sent_rel
 
-    def extract_ans_for_extra(self,  questions, extracted_sents):
+    def extract_ans_for_extra(self, questions, extracted_sents):
+        """
+        extract answers for the rest questions
+        :param questions: all questions
+        :param extracted_sents: candicated sentences for questions
+        :return:　None
+        """
+
         cnt, enter_cnt, true_cnt = 0, 0, 0
         for i in range(len(questions)):
             if pred_answers[i] != '无':
@@ -803,17 +933,77 @@ class RC(object):
                     replaced_pos = index
             ans = self.func_for_best(ques, sent, sent_rel, tmp_words, included_rel, replaced_pos)
             if not ans:
-                pred_answers[i] = tmp_words[0]
+                pred_answers[i] = tmp_words[0] if tmp_words else '无'
                 continue
             pred_answers[i] = ans[0]
             ans = ans[0]
             enter_cnt += 1
-            if ans in answers[i] or answers[i] in ans:
-                true_cnt += 1
+            if DEBUG:
+                if ans in answers[i] or answers[i] in ans:
+                    true_cnt += 1
         print(cnt, enter_cnt, true_cnt)
+
+def run_train():
+    handler = RC()
+    # handler.adjust_source_data('train.doc_query', 'reference.answer')
+    contents, questions, answers = handler.read_adjust_data(TMP_RESULT + '/train.txt', TMP_RESULT + '/train_ques.txt', TMP_RESULT + '/answers.txt')
+    # extracted_sents = handler.get_ans_sents(contents, questions, 'train')
+
+    global pred_answers
+    pred_answers = ['无' for _ in range(len(questions))]
+    questions, extracted_sents = handler.read_extract_sents(TMP_RESULT + '/ques_matched_sents_train.txt')
+    categories, cate_ques = handler.classify_questions(questions)
+
+    handler.extract_ans_for_WHO(questions, categories, extracted_sents)
+    handler.extract_ans_for_WHAT(questions, categories, extracted_sents)
+    handler.extract_ans_for_WHERE(questions, categories, extracted_sents)
+    handler.extract_ans_for_WHICH(questions, categories, extracted_sents)
+    tmp_answers = pred_answers[:]
+    handler.extract_ans_for_extra(questions, extracted_sents)
+
+    oth_answers = open('optimize_simplified.txt').read().strip().split('\n')
+    oth_answers = [item.split()[-1] for item in oth_answers]
+    for i in range(len(pred_answers)):
+        if tmp_answers[i] == '无' and 1 <= len(oth_answers[i]) <= 3:
+            pred_answers[i] = oth_answers[i]
+
+    with open(TMP_RESULT + '/pred_answer_train.txt', 'w') as fw:
+        for i in range(len(questions)):
+            fw.write('<qid_%d> ||| %s\n' % (i, pred_answers[i]))
+
+def run_test():
+    handler = RC()
+    # handler.adjust_test_data('test.doc_query')
+    contents, questions = handler.read_test_data(TMP_RESULT + '/test.txt', TMP_RESULT + '/test_ques.txt')
+    # extracted_sents = handler.get_ans_sents(contents, questions, 'test')
+
+    global pred_answers
+    pred_answers = ['无' for _ in range(len(questions))]
+    questions, extracted_sents = handler.read_extract_sents(TMP_RESULT + '/ques_matched_sents_test.txt')
+    categories, cate_ques = handler.classify_questions(questions)
+
+    handler.extract_ans_for_WHO(questions, categories, extracted_sents)
+    handler.extract_ans_for_WHAT(questions, categories, extracted_sents)
+    handler.extract_ans_for_WHERE(questions, categories, extracted_sents)
+    handler.extract_ans_for_WHICH(questions, categories, extracted_sents)
+    tmp_answers = pred_answers[:]
+    handler.extract_ans_for_extra(questions, extracted_sents)
+
+    oth_answers = open('Levein_answer.txt').read().strip().split('\n')
+    oth_answers = [item.split()[-1] for item in oth_answers]
+    for i in range(len(pred_answers)):
+        if tmp_answers[i] == '无' and 1 <= len(oth_answers[i]) <= 3:
+            pred_answers[i] = oth_answers[i]
+
+    with open(TMP_RESULT + '/pred_answer_test.txt', 'w') as fw:
+        for i in range(len(questions)):
+            fw.write('<qid_%d> ||| %s\n' % (i, pred_answers[i]))
 
 
 if __name__ == '__main__':
+    if not os.path.exists(TMP_RESULT):
+        os.mkdir(TMP_RESULT)
+
     parser = Parser()
     segmentor = Segmentor()
     postagger = Postagger()
@@ -824,26 +1014,85 @@ if __name__ == '__main__':
     with open('stop_words.txt') as fr:
         stop_words = fr.read().strip().split('\n')
 
-    handler = RC()
-    # handler.adjust_source_data('train.doc_query', 'reference.answer')
-    contents, questions, answers = handler.read_adjust_data('train.txt', 'questions.txt', 'answers.txt')
-    # extracted_sents = handler.get_ans_sents(contents, questions)
-    # postags = handler.count_ans_pos(answers)
-
-    pred_answers = ['无' for _ in range(len(questions))]
-    questions, extracted_sents = handler.read_extract_sents('ques_matched_sents.txt')
-    categories, cate_ques = handler.classify_questions(questions)
-
-    handler.extract_ans_for_WHO(questions, categories, extracted_sents)
-    handler.extract_ans_for_WHAT(questions, categories, extracted_sents)
-    handler.extract_ans_for_WHERE(questions, categories, extracted_sents)
-    handler.extract_ans_for_WHICH(questions, categories, extracted_sents)
-    handler.extract_ans_for_extra(questions, extracted_sents)
-
-    with open('pred_answer.txt', 'w') as fw:
-        for i in range(len(questions)):
-            fw.write('<qid_%d> ||| %s\n' % (i, pred_answers[i]))
+    run_train()
+    print('-'*10)
+    run_test()
 
     parser.release()
     segmentor.release()
     postagger.release()
+
+"""
+    def get_train_corpus(self, questions, extracted_sents):
+        X, Y = [], []
+        for i in range(len(questions)):
+            ans = pred_answers[i]
+            if ans not in answers[i] and  answers[i] not in ans:
+                continue
+
+            res = self.handle_ques_sent(questions, extracted_sents, i)
+            ques, ques_tag, ques_rel, sent, sent_tag, sent_rel = res
+            ques_noun = [ques[j] for j in range(len(ques)) if ques_tag[j] in ['n', 'ns', 'nh', 'nt', 'a', 'v', 'i', 'nz']]
+            tmp_words = [(sent[j], sent_tag[j], sent_rel[j][1]) for j in range(len(sent)) if sent_tag[j] in ['n', 'ns', 'nh', 'nt', 'a', 'v', 'i', 'nz']]
+            tmp_words = [item for item in tmp_words if item[0] not in ques_noun]
+
+            ques_word_tag_rel = ['%s,%s' % (tag, rel[1]) for word, tag, rel in zip(ques, ques_tag, ques_rel)]
+            sent_word_tag_rel = ['%s,%s' % (tag, rel[1]) for word, tag, rel in zip(sent, sent_tag, sent_rel)]
+            prefix  = '|'.join(ques_word_tag_rel) + '||' + '|'.join(sent_word_tag_rel) + '||'
+            for item in tmp_words:
+                one_item = prefix + ','.join(item[1:])
+                X.append(one_item)
+                if item[0] in answers[i] or answers[i] in item[0]:
+                    Y.append(1)
+                else:
+                    Y.append(0)
+        with open('train_corpus.txt', 'w') as fw:
+            for x, y in zip(X, Y):
+                fw.write('%s\t%s' % (y, x) + '\n')
+
+    def get_test_corpus(self, questions, extracted_sents):
+        X, Y, ANS = [], [], []
+        for i in range(len(questions)):
+            if pred_answers[i] != '无':
+                continue
+
+            res = self.handle_ques_sent(questions, extracted_sents, i)
+            ques, ques_tag, ques_rel, sent, sent_tag, sent_rel = res
+            ques_noun = [ques[j] for j in range(len(ques)) if ques_tag[j] in ['n', 'ns', 'nh', 'nt', 'a', 'v', 'i', 'nz']]
+            tmp_words = [(sent[j], sent_tag[j], sent_rel[j][1]) for j in range(len(sent)) if sent_tag[j] in ['n', 'ns', 'nh', 'nt', 'a', 'v', 'i', 'nz']]
+            tmp_words = [item for item in tmp_words if item[0] not in ques_noun]
+
+            ques_word_tag_rel = ['%s,%s' % (tag, rel[1]) for word, tag, rel in zip(ques, ques_tag, ques_rel)]
+            sent_word_tag_rel = ['%s,%s' % (tag, rel[1]) for word, tag, rel in zip(sent, sent_tag, sent_rel)]
+            prefix  = '|'.join(ques_word_tag_rel) + '||' + '|'.join(sent_word_tag_rel) + '||'
+            for item in tmp_words:
+                one_item = prefix + ','.join(item[1:])
+                X.append(one_item)
+                if item[0] in answers[i] or answers[i] in item[0]:
+                    Y.append(1)
+                else:
+                    Y.append(0)
+                ANS.append('%s\t%s' % (item[0], answers[i]))
+        with open('test_corpus.txt', 'w') as fw:
+            for x, y in zip(X, Y):
+                fw.write('%s\t%s' % (y, x) + '\n')
+        with open('ans_words.txt', 'w') as fw:
+            fw.write('\n'.join(ANS))
+
+    def train_model(self):
+        with open('train_corpus.txt') as fr:
+            lines = [item.split('\t') for item in fr.read().strip().split('\n')]
+            train_X = [x for _, x in lines]
+            train_Y = [y for y, _ in lines]
+        with open('test_corpus.txt') as fr:
+            lines = [item.split('\t') for item in fr.read().strip().split('\n')]
+            test_X = [x for _, x in lines]
+            test_Y = [y for y, _ in lines]
+
+        # model = SVC(kernel='sigmoid')
+        model = NuSVC(kernel='sigmoid')
+        model.fit(train_X, train_Y, )
+        # res = model.predict(test_X)
+        score = model.score(test_X, test_Y)
+        print(score)
+"""
