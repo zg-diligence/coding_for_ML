@@ -544,7 +544,8 @@ class RC(object):
 
                 bound = len(sent) if verb_index == -1 else verb_index
                 tmp_words = [sent[j] for j in range(bound) if sent_tag[j] in ['n', 'nh', 'ns', 'nz']]
-                tmp_words = [word for word in tmp_words if word not in ques_noun]
+                # tmp_words = [word for word in tmp_words if word not in ques_noun]
+                tmp_words = [word for word in tmp_words if word not in ques_noun and len(word)>1]
                 tmp_words = sorted(list(set(tmp_words)))
                 if len(tmp_words) > 1:
                     tmp_words = self.ans_for_left_WHO(ques, sent, sent_tag, sent_rel, tmp_words, verb_index)
@@ -564,7 +565,8 @@ class RC(object):
 
                 bound = 0 if verb_index == -1 else verb_index
                 tmp_words = [sent[j] for j in range(bound+1, len(sent)) if 'n' in sent_tag[j]]
-                tmp_words = [word for word in tmp_words if word not in ques_noun]
+                # tmp_words = [word for word in tmp_words if word not in ques_noun]
+                tmp_words = [word for word in tmp_words if word not in ques_noun and len(word) > 1]
                 tmp_words = sorted(list(set(tmp_words)))
                 if len(tmp_words) > 1:
                     tmp_words = self.ans_for_right_WHO(ques, sent, sent_tag, sent_rel, tmp_words, verb_index)
@@ -590,7 +592,8 @@ class RC(object):
                         tmp_ques = ques[j+1:]
 
                 tmp_words = [sent[j] for j in range(lindex+1, rindex) if 'n' in sent_tag[j]]
-                tmp_words = [word for word in tmp_words if word not in ques_noun]
+                # tmp_words = [word for word in tmp_words if word not in ques_noun]
+                tmp_words = [word for word in tmp_words if word not in ques_noun and len(word) > 1]
                 tmp_words = sorted(list(set(tmp_words)))
                 if len(tmp_words) > 1:
                     tmp_words = self.ans_for_middle_WHO(tmp_ques, sent, sent_tag, sent_rel, tmp_words)
@@ -986,14 +989,14 @@ def run_test():
     handler.extract_ans_for_WHAT(questions, categories, extracted_sents)
     handler.extract_ans_for_WHERE(questions, categories, extracted_sents)
     handler.extract_ans_for_WHICH(questions, categories, extracted_sents)
-    tmp_answers = pred_answers[:]
+    # tmp_answers = pred_answers[:]
     handler.extract_ans_for_extra(questions, extracted_sents)
 
-    oth_answers = open('Levein_answer.txt').read().strip().split('\n')
-    oth_answers = [item.split()[-1] for item in oth_answers]
-    for i in range(len(pred_answers)):
-        if tmp_answers[i] == '无' and 1 <= len(oth_answers[i]) <= 3:
-            pred_answers[i] = oth_answers[i]
+    # oth_answers = open('Levein_answer.txt').read().strip().split('\n')
+    # oth_answers = [item.split()[-1] for item in oth_answers]
+    # for i in range(len(pred_answers)):
+    #     if tmp_answers[i] == '无' and 1 <= len(oth_answers[i]) <= 3:
+    #         pred_answers[i] = oth_answers[i]
 
     with open(TMP_RESULT + '/pred_answer_test.txt', 'w') as fw:
         for i in range(len(questions)):
@@ -1014,8 +1017,8 @@ if __name__ == '__main__':
     with open('stop_words.txt') as fr:
         stop_words = fr.read().strip().split('\n')
 
-    run_train()
-    print('-'*10)
+    # run_train()
+    # print('-'*10)
     run_test()
 
     parser.release()
